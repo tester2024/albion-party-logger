@@ -1,0 +1,125 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Auto Increment Semver Action
+        uses: MCKanpolat/auto-semver-action@v1
+        id: versioning
+        with:
+          releaseType: patch
+          incrementPerCommit: false
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Next Release Number
+        run: echo ${{ steps.versioning.outputs.version }}
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.versioning.outputs.version }}
+          release_name: Release ${{ steps.versioning.outputs.version }}
+          body: |
+            Automatically created release by GitHub Actions
+          draft: false
+          prerelease: false
+
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.versioning.outputs.version }}
+
+  build:
+    name: Build and Upload
+    needs: release
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        target: [ windows, linux ]
+        arch: [ amd64, arm64 ]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Set up Go
+        uses: actions/setup-go@v2
+
+      - name: Set binary name
+        run: |
+          if [ "${{ matrix.target }}" == "windows" ]; then
+            executable="M00DSWINGS-${{ matrix.target }}-${{ needs.release.outputs.version }}.exe"
+          else 
+            executable="M00DSWINGS-${{ matrix.target }}-${{ needs.release.outputs.version }}"
+          fi
+
+          echo "executable=$executable" >> $GITHUB_ENV
+
+      - name: Install goversioninfo (Windows only)
+        if: matrix.target == 'windows'
+        run: go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
+
+      - name: Create versioninfo.json (Windows only)
+        if: matrix.target == 'windows'
+        run: |
+          cat <<EOF > versioninfo.json
+          {
+            "FixedFileInfo": {
+              "FileVersion": "${{ needs.release.outputs.version }}",
+              "ProductVersion": "${{ needs.release.outputs.version }}"
+            },
+            "StringFileInfo": {
+              "CompanyName": "M00DSWINGS Guild",
+              "FileDescription": "M00DSWINGS in-game loot and party logger",
+              "FileVersion": "${{ needs.release.outputs.version }}",
+              "InternalName": "M00DSWINGS",
+              "LegalCopyright": "Copyright © 2025 M00DSWINGS. All rights reserved.",
+              "OriginalFilename": "M00DSWINGS-${{ matrix.target }}-${{ needs.release.outputs.version }}.exe",
+              "ProductName": "M00DSWINGS Logger",
+              "ProductVersion": "${{ needs.release.outputs.version }}"
+            },
+            "VarFileInfo": {
+              "Translation": {
+                "LangID": "0409",
+                "CharsetID": "04B0"
+              }
+            },
+            "IconPath": "appicon.ico"
+          }
+          EOF
+
+      - name: Generate resource file (Windows only)
+        if: matrix.target == 'windows'
+        run: goversioninfo -o resource.syso
+
+      - name: Build
+        run: |
+          GOOS=${{ matrix.target }} GOARCH=${{ matrix.arch }} go build -o ${{ env.executable }} .
+
+      - name: Upload Artifact
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.release.outputs.upload_url }}
+          asset_path: ${{ env.executable }}
+          asset_name: ${{ env.executable }}
+          asset_content_type: application/octet-stream
+
+permissions:
+  contents: write
+  packages: write
