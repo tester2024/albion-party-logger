@@ -49,8 +49,8 @@ jobs:
 
     strategy:
       matrix:
-        target: [ windows ]
-        arch: [ amd64, arm64 ]
+        target: [ windows, linux ]
+        arch: [ amd64 ]
 
     steps:
       - name: Checkout repository
