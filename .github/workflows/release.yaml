@@ -1,9 +1,6 @@
 name: Build and Release
 
-on:
-  push:
-    branches:
-      - master
+on: { push: { branches: [ master ] } }
 
 jobs:
   release:
@@ -42,6 +39,7 @@ jobs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
       version: ${{ steps.versioning.outputs.version }}
 
+
   build:
     name: Build and Upload
     needs: release
@@ -68,6 +66,9 @@ jobs:
           fi
 
           echo "executable=$executable" >> $GITHUB_ENV
+
+      - name: Install dependencies
+        run: sudo apt install libpcap-dev
 
       - name: Install goversioninfo
         run: go get github.com/josephspurrier/goversioninfo/cmd/goversioninfo
