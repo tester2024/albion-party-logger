@@ -74,7 +74,7 @@ jobs:
         run: go get github.com/josephspurrier/goversioninfo/cmd/goversioninfo
 
       - name: Install stringer
-        run: go mod download golang.org/x/tools
+        run: go install golang.org/x/tools/cmd/stringer
 
       - name: Create versioninfo.json (Windows only)
         if: matrix.target == 'windows'
@@ -90,7 +90,7 @@ jobs:
               "FileDescription": "M00DSWINGS in-game loot and party logger",
               "FileVersion": "${{ needs.release.outputs.version }}",
               "InternalName": "M00DSWINGS",
-              "LegalCopyright": "Copyright © 2025 M00DSWINGS. All rights reserved.",
+              "LegalCopyright": "Copyright  2025 M00DSWINGS. All rights reserved.",
               "OriginalFilename": "M00DSWINGS-${{ matrix.target }}-${{ needs.release.outputs.version }}.exe",
               "ProductName": "M00DSWINGS Logger",
               "ProductVersion": "${{ needs.release.outputs.version }}"
