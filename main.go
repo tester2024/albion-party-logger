@@ -26,6 +26,10 @@ func init() {
 		log.Fatal("pcap is not installed")
 	}
 
+	if serverAddr == "" {
+		log.Fatal("server address is required")
+	}
+
 	switch {
 	case interfaceName == "":
 		interfaceObj, err = utils.GetDefaultDevice()
