@@ -60,9 +60,9 @@ jobs:
       - name: Set binary name
         run: |
           if [ "${{ matrix.target }}" == "windows" ]; then
-            executable="M00DSWINGS-${{ matrix.target }}-${{ needs.release.outputs.version }}.exe"
+            executable="m00dswings-${{ matrix.target }}-${{ needs.release.outputs.version }}-${{ matrix.arch }}.exe"
           else 
-            executable="M00DSWINGS-${{ matrix.target }}-${{ needs.release.outputs.version }}"
+            executable="m00dswings-${{ matrix.target }}-${{ needs.release.outputs.version }}-${{ matrix.arch }}"
           fi
 
           echo "executable=$executable" >> $GITHUB_ENV
