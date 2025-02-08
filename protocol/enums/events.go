@@ -1,6 +1,6 @@
 package enums
 
-//go:generate stringer -type=EventType
+//go:generate golang.org/x/tools/cmd/stringer -type=EventType
 type EventType int16
 
 const (
