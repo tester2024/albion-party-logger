@@ -70,8 +70,7 @@ jobs:
           echo "executable=$executable" >> $GITHUB_ENV
 
       - name: Install tools
-        run: go mod download golang.org/x/tools
-
+        run: go mod download golang.org/x/tools/cmd/stringer
 
       - name: Install goversioninfo (Windows only)
         if: matrix.target == 'windows'
