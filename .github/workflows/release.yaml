@@ -72,6 +72,7 @@ jobs:
       - name: Install tools
         run: go mod download golang.org/x/tools
 
+
       - name: Install goversioninfo (Windows only)
         if: matrix.target == 'windows'
         run: go get github.com/josephspurrier/goversioninfo/cmd/goversioninfo
