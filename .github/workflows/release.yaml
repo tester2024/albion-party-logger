@@ -107,7 +107,7 @@ jobs:
 
       - name: Generate resource file (Windows only)
         if: matrix.target == 'windows'
-        run: go run github.com/josephspurrier/goversioninfo -o resources.go -manifest versioninfo.json
+        run: go run github.com/josephspurrier/goversioninfo/cmd/goversioninfo
 
       - name: Generate data
         run: go generate ./...
