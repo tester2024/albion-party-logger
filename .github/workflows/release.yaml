@@ -99,6 +99,15 @@ jobs:
       - name: Build
         run: GOOS=${{ matrix.target }} GOARCH=${{ matrix.arch }} go build -o ${{ env.executable }} .
 
+      - name: Download UPX
+        run: |
+          wget https://github.com/upx/upx/releases/download/v4.2.4/upx-4.2.4-amd64_linux.tar.xz
+          tar -xvf upx-4.2.4-amd64_linux.tar.xz
+          mv upx-4.2.4-amd64_linux/* .
+
+      - name: Compress
+        run: ./upx --ultra-brute ${{ env.executable }}
+
       - name: Upload Artifact
         uses: actions/upload-release-asset@v1
         env:
