@@ -1,6 +1,6 @@
 package enums
 
-//go:generate golang.org/x/tools/cmd/stringer -type=OperationType
+//go:generate stringer -type=OperationType
 type OperationType uint16
 
 const (

@@ -68,10 +68,9 @@ jobs:
           fi
 
           echo "executable=$executable" >> $GITHUB_ENV
-      - name: Install tools
-        run: |
-          go get golang.org/x/tools/cmd/stringer
-          go get github.com/josephspurrier/goversioninfo/cmd/goversioninfo
+
+      - name: Install goversioninfo
+        run: go get github.com/josephspurrier/goversioninfo/cmd/goversioninfo
 
       - name: Create versioninfo.json (Windows only)
         if: matrix.target == 'windows'
@@ -95,9 +94,6 @@ jobs:
       - name: Generate resource file (Windows only)
         if: matrix.target == 'windows'
         run: go run github.com/josephspurrier/goversioninfo/cmd/goversioninfo
-
-      - name: Generate data
-        run: go generate ./...
 
       - name: Build
         run: GOOS=${{ matrix.target }} GOARCH=${{ matrix.arch }} go build -o ${{ env.executable }} .

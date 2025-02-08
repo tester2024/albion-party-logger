@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-//go:generate golang.org/x/tools/cmd/stringer -type=PartyAction
+//go:generate stringer -type=PartyAction
 type PartyAction int
 
 const (
