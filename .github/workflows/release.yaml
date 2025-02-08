@@ -79,7 +79,11 @@ jobs:
           cat <<EOF > versioninfo.json
           {
             "FixedFileInfo": {
-              "FileVersion": "${{ needs.release.outputs.version }}",
+              "FileVersion": {
+                "Major": 0,
+                "Minor": 0,
+                "Patch": 0
+              },
               "ProductVersion": "${{ needs.release.outputs.version }}"
             },
             "StringFileInfo": {
