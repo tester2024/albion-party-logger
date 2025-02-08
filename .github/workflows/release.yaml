@@ -68,16 +68,10 @@ jobs:
           fi
 
           echo "executable=$executable" >> $GITHUB_ENV
-
       - name: Install tools
-        run: go mod download golang.org/x/tools/cmd/stringer
-
-      - name: Install goversioninfo (Windows only)
-        if: matrix.target == 'windows'
-        run: go get github.com/josephspurrier/goversioninfo/cmd/goversioninfo
-
-      - name: Install stringer
-        run: go install golang.org/x/tools/cmd/stringer
+        run: |
+          go get golang.org/x/tools/cmd/stringer
+          go get github.com/josephspurrier/goversioninfo/cmd/goversioninfo
 
       - name: Create versioninfo.json (Windows only)
         if: matrix.target == 'windows'
