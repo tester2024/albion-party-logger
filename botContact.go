@@ -2,228 +2,401 @@ package main
 
 import (
 	"context"
-	"github.com/disgoorg/disgo/discord"
-	"github.com/disgoorg/disgo/webhook"
+	"encoding/json"
+	"fmt"
 	"github.com/google/uuid"
 	"log"
-	"strings"
+	"sync"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
-type BotContact struct {
-	m           *GameDataManager
-	partyLogger webhook.Client
-	lootLogger  webhook.Client
+type WebSocketClient struct {
+	url          string
+	conn         *websocket.Conn
+	sendMx       *sync.Mutex
+	sendChan     chan []byte
+	charcterId   uuid.UUID
+	charcterName string
+	allianceName string
+	guildName    string
 }
 
-func (l *BotContact) Close(ctx context.Context) {
-	if l.lootLogger != nil {
-		l.lootLogger.Close(ctx)
-	}
-
-	if l.partyLogger != nil {
-		l.partyLogger.Close(ctx)
-	}
-}
-
-func (l *BotContact) LogParty(message discord.WebhookMessageCreate) {
-	if l.partyLogger == nil {
-		return
-	}
-
-	_, err := l.partyLogger.CreateMessage(message)
-	if err != nil {
-		panic(err)
+func NewWebSocketClient(url string) *WebSocketClient {
+	return &WebSocketClient{
+		url:      url,
+		sendMx:   new(sync.Mutex),
+		sendChan: make(chan []byte, 100),
 	}
 }
 
-func (l *BotContact) LogPartyAdd(uid uuid.UUID) {
-	username := l.m.GetUsername(uid)
-	partyOwnerName := l.m.GetUsername(l.m.CurrentParty.PartyOwner)
-	selfUsername := l.m.GetSelfUsername()
+func (c *WebSocketClient) Connect(ctx context.Context) error {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
 
-	l.LogParty(discord.NewWebhookMessageCreateBuilder().
-		AddEmbeds(
-			discord.NewEmbedBuilder().
-				SetTitlef("✅ **Member Joined** - %s", partyOwnerName).
-				SetFooter(selfUsername, "").
-				SetColor(0x00ff00).
-				SetDescriptionf("👤 **Username:** %s", username).
-				SetTimestamp(time.Now()).
-				Build(),
-		).
-		Build(),
-	)
-}
-
-func (l *BotContact) LogPartyLeft(uid uuid.UUID) {
-	username := l.m.GetUsername(uid)
-	partyOwnerName := l.m.GetUsername(l.m.CurrentParty.PartyOwner)
-	selfUsername := l.m.GetSelfUsername()
-
-	l.LogParty(discord.NewWebhookMessageCreateBuilder().
-		AddEmbeds(
-			discord.NewEmbedBuilder().
-				SetTitlef("❌ **Member Left** - %s", partyOwnerName).
-				SetFooter(selfUsername, "").
-				SetColor(0xff0000).
-				SetDescriptionf("👤 **Username:** %s", username).
-				SetTimestamp(time.Now()).
-				Build(),
-		).
-		Build(),
-	)
-}
-
-func (l *BotContact) LogSelfLeave(uid uuid.UUID) {
-	username := l.m.GetUsername(uid)
-	partyOwnerName := l.m.GetUsername(l.m.CurrentParty.PartyOwner)
-	selfUsername := l.m.GetSelfUsername()
-
-	l.LogParty(discord.NewWebhookMessageCreateBuilder().
-		AddEmbeds(
-			discord.NewEmbedBuilder().
-				SetTitlef("🚪 **I Leave Party** - %s", partyOwnerName).
-				SetFooter(selfUsername, "").
-				SetColor(0xffa500).
-				SetDescriptionf("👤 **Username:** %s", username).
-				SetTimestamp(time.Now()).
-				Build(),
-			l.generateHistoryEmbed(),
-		).
-		Build(),
-	)
-}
-
-func (l *BotContact) LogPartyUpdate(removedPlayers []uuid.UUID, addedPlayers []uuid.UUID) {
-	if len(removedPlayers) == 0 && len(addedPlayers) == 0 {
-		return
-	}
-
-	partyOwnerName := l.m.GetUsername(l.m.CurrentParty.PartyOwner)
-	selfUsername := l.m.GetSelfUsername()
-
-	embedBuilder := discord.NewEmbedBuilder().
-		SetTitlef("🔄 **Party Update** - %s", partyOwnerName).
-		SetFooter(selfUsername, "").
-		SetColor(0x3498db).
-		SetTimestamp(time.Now())
-
-	if len(addedPlayers) > 0 {
-		var addedPlayersDesc string
-		for _, player := range addedPlayers {
-			username := l.m.GetUsername(player)
-			if username == "" {
-				username = player.String()
-			}
-			addedPlayersDesc += "✅ " + username + "\n"
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
 		}
-		embedBuilder.AddField("**Added Players:**", addedPlayersDesc, false)
-	}
 
-	if len(removedPlayers) > 0 {
-		var removedPlayersDesc string
-		for _, player := range removedPlayers {
-			username := l.m.GetUsername(player)
-			if username == "" {
-				username = player.String()
-			}
-			removedPlayersDesc += "❌ " + username + "\n"
+		conn, _, err := websocket.DefaultDialer.DialContext(ctx, c.url, nil)
+		if err != nil {
+			log.Printf("Failed to connect, retrying in 5 seconds... %v\n", err)
+			<-ticker.C
+			continue
 		}
-		embedBuilder.AddField("**Removed Players:**", removedPlayersDesc, false)
+
+		log.Println("Connected to WebSocket server")
+
+		c.conn = conn
+
+		if err := c.SendInitialize(); err != nil {
+			return err
+		}
+
+		go c.readLoop(ctx)
+		go c.writeLoop(ctx)
+
+		return nil
 	}
-
-	l.LogParty(discord.NewWebhookMessageCreateBuilder().
-		AddEmbeds(
-			embedBuilder.Build(),
-			l.generateHistoryEmbed(),
-		).
-		Build(),
-	)
 }
 
-func (l *BotContact) LogPartyCreate(party *Party) {
-	partyOwnerName := l.m.GetUsername(l.m.CurrentParty.PartyOwner)
-	selfUsername := l.m.GetSelfUsername()
+func (c *WebSocketClient) readLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
 
-	members := new(strings.Builder)
-	for _, u := range party.Members.Values() {
-		username := l.m.GetUsername(u)
-		members.WriteString("👤 ")
-		members.WriteString(username)
-		members.WriteRune('\n')
+		_, message, err := c.conn.ReadMessage()
+		if err != nil {
+			log.Printf("Read error, reconnecting... %v\n", err)
+			c.reconnect(ctx)
+			return
+		}
+		log.Println("Received:", string(message))
 	}
-
-	l.LogParty(discord.NewWebhookMessageCreateBuilder().
-		AddEmbeds(
-			discord.NewEmbedBuilder().
-				SetTitlef("🎉 **New Party Created** - %s", partyOwnerName).
-				AddField("**Members:**", members.String(), false).
-				SetFooter(selfUsername, "").
-				SetColor(0x00ff00).
-				SetTimestamp(time.Now()).
-				Build(),
-		).
-		Build(),
-	)
 }
 
-func (l *BotContact) LogPartyDisband() {
-	partyOwnerName := l.m.GetUsername(l.m.CurrentParty.PartyOwner)
-	selfUsername := l.m.GetSelfUsername()
+func (c *WebSocketClient) writeLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg := <-c.sendChan:
+			c.sendMx.Lock()
+			var message map[string]interface{}
 
-	l.LogParty(discord.NewWebhookMessageCreateBuilder().
-		AddEmbeds(
-			discord.NewEmbedBuilder().
-				SetTitlef("💔 **Party Disbanded** - %s", partyOwnerName).
-				SetFooter(selfUsername, "").
-				SetColor(0xff0000).
-				SetTimestamp(time.Now()).
-				Build(),
-			l.generateHistoryEmbed(),
-		).
-		Build(),
-	)
-}
+			if err := json.Unmarshal(msg, &message); err != nil {
+				log.Printf("Failed to unmarshal message: %v\n", err)
+				c.sendMx.Unlock()
+				continue
+			}
 
-func (l *BotContact) generateHistoryEmbed() discord.Embed {
-	builder := new(strings.Builder)
-	for _, entry := range l.m.CurrentParty.History {
-		builder.WriteString("🕒 ")
-		builder.WriteString(discord.FormattedTimestampMention(entry.Timestamp.Unix(), discord.TimestampStyleRelative))
-		builder.WriteString(" - ")
-		builder.WriteString(l.m.GetUsername(entry.User))
-		builder.WriteString(" ➡ ")
-		builder.WriteString(entry.Action.String())
-		builder.WriteString("\n")
+			if c.conn == nil {
+				c.sendChan <- msg
+				c.sendMx.Unlock()
+				continue
+			}
+
+			if err := c.conn.WriteJSON(message); err != nil {
+				log.Printf("Write error, reconnecting... %v\n", err)
+				c.sendMx.Unlock()
+				c.reconnect(ctx)
+				return
+			}
+			c.sendMx.Unlock()
+		}
 	}
-
-	return discord.NewEmbedBuilder().
-		SetTitlef("📜 **Party History** - %s", l.m.GetUsername(l.m.CurrentParty.PartyOwner)).
-		SetFooter(l.m.GetSelfUsername(), "").
-		SetColor(0x7289da).
-		SetDescription(builder.String()).
-		SetTimestamp(time.Now()).
-		Build()
 }
 
-func NewDiscordLogger(m *GameDataManager, partyLoggerUrl string, lootLoggerUrl string) *BotContact {
-	var partyLogger, lootLogger webhook.Client
-	var err error
+func (c *WebSocketClient) reconnect(ctx context.Context) {
+	c.conn.Close()
+	c.conn = nil
+	go c.Connect(ctx)
+}
 
-	partyLogger, err = webhook.NewWithURL(partyLoggerUrl)
+func (c *WebSocketClient) Send(ctx context.Context, message map[string]interface{}) error {
+	msg, err := json.Marshal(message)
 	if err != nil {
-		log.Println(err)
+		return err
 	}
 
-	lootLogger, err = webhook.NewWithURL(lootLoggerUrl)
-	if err != nil {
-		log.Println(err)
+	select {
+	case c.sendChan <- msg:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (c *WebSocketClient) Close() error {
+	if c.conn != nil {
+		return c.conn.Close()
 	}
 
-	return &BotContact{
-		m:           m,
-		partyLogger: partyLogger,
-		lootLogger:  lootLogger,
+	return nil
+}
+
+func (c *WebSocketClient) Initialize(id uuid.UUID, name string, guildName string, allianceName string) error {
+	c.charcterId = id
+	c.charcterName = name
+	c.guildName = guildName
+	c.allianceName = allianceName
+
+	if c.conn == nil {
+		if err := c.Connect(context.Background()); err != nil {
+			return err
+		}
 	}
+
+	return nil
+}
+
+func (c *WebSocketClient) SendInitialize() error {
+	msg := map[string]interface{}{
+		"action":   "initialize",
+		"id":       c.charcterId,
+		"name":     c.charcterName,
+		"guild":    c.guildName,
+		"alliance": c.allianceName,
+	}
+
+	if err := c.Send(context.Background(), msg); err != nil {
+		return fmt.Errorf("Failed to send initialize message: %v\n", err)
+	}
+
+	return nil
+}
+
+func (c *WebSocketClient) CreateNewChar(uid uuid.UUID, name string, guildName string, allianceName string) error {
+	msg := map[string]interface{}{
+		"action":   "new_character",
+		"id":       uid,
+		"name":     name,
+		"guild":    guildName,
+		"alliance": allianceName,
+	}
+
+	if err := c.Send(context.Background(), msg); err != nil {
+		return fmt.Errorf("Failed to send create_new_char message: %v\n", err)
+	}
+
+	return nil
+}
+
+func (c *WebSocketClient) UpdateCharacterStats(name string, guild string, alliance string) interface{} {
+	msg := map[string]interface{}{
+		"action":   "update_character_stats",
+		"name":     name,
+		"guild":    guild,
+		"alliance": alliance,
+	}
+
+	if err := c.Send(context.Background(), msg); err != nil {
+		return fmt.Errorf("Failed to send update_character_stats message: %v\n", err)
+	}
+
+	return nil
+}
+
+func (c *WebSocketClient) JoinParty(leader uuid.UUID, playersUuid []uuid.UUID) error {
+	msg := map[string]interface{}{
+		"action":  "join_party",
+		"leader":  leader,
+		"players": playersUuid,
+	}
+
+	if err := c.Send(context.Background(), msg); err != nil {
+		return fmt.Errorf("Failed to send create_party_or_update message: %v\n", err)
+	}
+
+	return nil
+}
+
+func (c *WebSocketClient) AddPartyPlayer(uid uuid.UUID) error {
+	msg := map[string]interface{}{
+		"action": "add_member",
+		"id":     uid,
+	}
+
+	if err := c.Send(context.Background(), msg); err != nil {
+		return fmt.Errorf("Failed to send add_party_player message: %v\n", err)
+	}
+
+	return nil
+}
+
+func (c *WebSocketClient) RemovePartyPlayer(uid uuid.UUID) error {
+	msg := map[string]interface{}{
+		"action": "remove_member",
+		"id":     uid,
+	}
+
+	if err := c.Send(context.Background(), msg); err != nil {
+		return fmt.Errorf("Failed to send remove_party_player message: %v\n", err)
+	}
+
+	return nil
+}
+
+func (c *WebSocketClient) DisbandParty() error {
+	msg := map[string]interface{}{
+		"action": "disband_party",
+	}
+
+	if err := c.Send(context.Background(), msg); err != nil {
+		return fmt.Errorf("Failed to send disband_party message: %v\n", err)
+	}
+
+	return nil
+}
+
+func (c *WebSocketClient) UpdatePartyLeader(leader uuid.UUID) error {
+	msg := map[string]interface{}{
+		"action": "update_leader",
+		"leader": leader,
+	}
+
+	if err := c.Send(context.Background(), msg); err != nil {
+		return fmt.Errorf("Failed to send update_party_leader message: %v\n", err)
+	}
+
+	return nil
+}
+
+func (c *WebSocketClient) AttachItemContainer(id int, uuid uuid.UUID, items []int, slots int) error {
+	msg := map[string]interface{}{
+		"action": "attach_item_container",
+		"id":     id,
+		"uuid":   uuid,
+		"items":  items,
+		"slots":  slots,
+	}
+
+	if err := c.Send(context.Background(), msg); err != nil {
+		return fmt.Errorf("Failed to send attach_item_container message: %v\n", err)
+	}
+
+	return nil
+}
+func (c *WebSocketClient) MoveItems(fromSlot int, fromUUID uuid.UUID, toSlot int, toUUID uuid.UUID) error {
+	msg := map[string]interface{}{
+		"action":   "move_items",
+		"fromSlot": fromSlot,
+		"fromUUID": fromUUID,
+		"toSlot":   toSlot,
+		"toUUID":   toUUID,
+	}
+
+	if err := c.Send(context.Background(), msg); err != nil {
+		return fmt.Errorf("Failed to send move_items message: %v\n", err)
+	}
+
+	return nil
+}
+
+func (c *WebSocketClient) PutItems(id int, containerId uuid.UUID, slotId int) error {
+	msg := map[string]interface{}{
+		"action":      "put_items",
+		"id":          id,
+		"containerId": containerId,
+		"slotId":      slotId,
+	}
+
+	if err := c.Send(context.Background(), msg); err != nil {
+		return fmt.Errorf("Failed to send put_items message: %v\n", err)
+	}
+
+	return nil
+}
+
+func (c *WebSocketClient) CreateNewLootChest(id int, owner string) error {
+	msg := map[string]interface{}{
+		"action": "create_new_loot_chest",
+		"id":     id,
+		"owner":  owner,
+	}
+
+	if err := c.Send(context.Background(), msg); err != nil {
+		return fmt.Errorf("Failed to send create_new_loot_chest message: %v\n", err)
+	}
+
+	return nil
+}
+
+func (c *WebSocketClient) CreateNewLoot(id int, owner string) error {
+	msg := map[string]interface{}{
+		"action": "create_new_loot",
+		"id":     id,
+		"owner":  owner,
+	}
+
+	if err := c.Send(context.Background(), msg); err != nil {
+		return fmt.Errorf("Failed to send create_new_loot message: %v\n", err)
+	}
+
+	return nil
+}
+
+func (c *WebSocketClient) UpdateLootChest(id int) error {
+	msg := map[string]interface{}{
+		"action": "update_loot_chest",
+		"id":     id,
+	}
+
+	if err := c.Send(context.Background(), msg); err != nil {
+		return fmt.Errorf("Failed to send update_loot_chest message: %v\n", err)
+	}
+
+	return nil
+}
+
+func (c *WebSocketClient) OtherGrabLoot(lootedFrom string, lootedBy string, silver bool, index int, quantity int) error {
+	msg := map[string]interface{}{
+		"action":     "other_grab_loot",
+		"lootedFrom": lootedFrom,
+		"lootedBy":   lootedBy,
+		"silver":     silver,
+		"index":      index,
+		"quantity":   quantity,
+	}
+
+	if err := c.Send(context.Background(), msg); err != nil {
+		return fmt.Errorf("Failed to send other_grab_loot message: %v\n", err)
+	}
+
+	return nil
+}
+
+func (c *WebSocketClient) DetachItemContainer(containerUUID uuid.UUID) error {
+	msg := map[string]interface{}{
+		"action":        "detach_item_container",
+		"containerUUID": containerUUID,
+	}
+
+	if err := c.Send(context.Background(), msg); err != nil {
+		return fmt.Errorf("Failed to send detach_item_container message: %v\n", err)
+	}
+
+	return nil
+}
+
+func (c *WebSocketClient) NewSimpleItem(id int, index int, quantity int) interface{} {
+	msg := map[string]interface{}{
+		"action":   "new_simple_item",
+		"id":       id,
+		"index":    index,
+		"quantity": quantity,
+	}
+
+	if err := c.Send(context.Background(), msg); err != nil {
+		return fmt.Errorf("Failed to send new_simple_item message: %v\n", err)
+	}
+
+	return nil
 }

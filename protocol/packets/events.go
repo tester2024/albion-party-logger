@@ -12,44 +12,17 @@ type EvLeave struct {
 	Id int64 `albion:"0"`
 }
 
-type EvPartyJoined struct {
-	PartyLeader     uuid.UUID   `albion:"3"`
-	PlayersUuid     []uuid.UUID `albion:"4"`
-	PlayerUsernames []string    `albion:"5"`
-}
-
-type EvPartySinglePlayerJoined struct {
-	PlayerUID  uuid.UUID `albion:"1"`
-	PlayerName string    `albion:"2"`
-}
-
-type EvPartyLeft struct {
-	PlayerUID uuid.UUID `albion:"1"`
-}
-
-type EvPartyLeaderChanged struct {
-	NewPartyLeader uuid.UUID `albion:"1"`
-}
-
 type EvNewCharacter struct {
-	PlayerUID  uuid.UUID `albion:"7"`
-	PlayerName string    `albion:"1"`
+	PlayerUID    uuid.UUID `albion:"7"`
+	PlayerName   string    `albion:"1"`
+	GuildName    string    `albion:"8"`
+	AllianceName string    `albion:"51"`
 }
 
-type EvLootEvent struct {
-	ObjectID int    `albion:"0"`
-	LootBody string `albion:"3"`
-}
-
-type EvGrabbedLoot struct {
-	LootedFromName string `albion:"1"`
-	LooterByName   string `albion:"2"`
-	IsSilver       bool   `albion:"3"`
-	ItemIndex      int    `albion:"4"`
-	Quantity       int    `albion:"5"`
-}
-
-type EvPartyDisbanded struct {
+type EvCharacterStats struct {
+	PlayerName   string `albion:"1"`
+	GuildName    string `albion:"2"`
+	AllianceName string `albion:"4"`
 }
 
 type Logger struct {

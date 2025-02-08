@@ -4,33 +4,22 @@ import (
 	"M00DSWINGS/protocol/enums"
 	"M00DSWINGS/protocol/packets"
 	"M00DSWINGS/utils"
-	"context"
 	"flag"
 	"github.com/google/gopacket/pcap"
-	"github.com/google/uuid"
 	"log"
-	"syscall"
 )
 
 var (
-	err            error
-	interfaceName  string
-	interfaceObj   pcap.Interface
-	partyLoggerUrl = getEnv("PARTY_WEBHOOK")
-	lootLoggerUrl  = getEnv("LOOT_WEBHOOK")
+	err           error
+	interfaceName string
+	serverAddr    string
+	interfaceObj  pcap.Interface
 )
-
-func getEnv(key string) string {
-	value, exists := syscall.Getenv(key)
-	if !exists {
-		log.Printf("Environment variable %s not set", key)
-		return ""
-	}
-	return value
-}
 
 func init() {
 	flag.StringVar(&interfaceName, "interface", "", "Network interface to use")
+	flag.StringVar(&serverAddr, "server", "ws://85.192.42.52:3000", "Server address")
+
 	flag.Parse()
 
 	if !utils.CheckPcapInstalled() {
@@ -55,100 +44,135 @@ func main() {
 	l := NewLogger(interfaceObj)
 
 	l.RegisterOperation(enums.OpTypeJoin, packets.OpJoinGame{})
-	l.RegisterOperation(enums.OpTypePartyLeave, packets.Logger{})
-	l.RegisterOperation(enums.OpTypePartyKickPlayer, packets.Logger{})
 
+	// Party events
 	l.RegisterEvent(enums.EventTypePartyPlayerJoined, packets.EvPartySinglePlayerJoined{})
 	l.RegisterEvent(enums.EventTypePartyJoined, packets.EvPartyJoined{})
 	l.RegisterEvent(enums.EventTypePartyPlayerLeft, packets.EvPartyLeft{})
 	l.RegisterEvent(enums.EventTypeNewCharacter, packets.EvNewCharacter{})
+	l.RegisterEvent(enums.EventTypeCharacterStats, packets.EvCharacterStats{})
 	l.RegisterEvent(enums.EventTypePartyLeaderChanged, packets.EvPartyLeaderChanged{})
-
 	l.RegisterEvent(enums.EventTypePartyDisbanded, packets.EvPartyDisbanded{})
 
+	// Log Party events
 	l.RegisterEvent(enums.EventTypePartyReadyCheckUpdate, packets.Logger{})
-	l.RegisterEvent(enums.EventTypePartyPlayerLeaveScheduled, packets.Logger{})
 	l.RegisterEvent(enums.EventTypePartyPlayerUpdated, packets.Logger{})
 	l.RegisterEvent(enums.EventTypePartyInvitationAnswer, packets.Logger{})
 	l.RegisterEvent(enums.EventTypePartyJoinRequestAnswer, packets.Logger{})
-	l.RegisterEvent(enums.EventTypePartyOnClusterPartyJoined, packets.Logger{})
 	l.RegisterEvent(enums.EventTypePartyLootItems, packets.Logger{})
 	l.RegisterEvent(enums.EventTypePartyLootItemsRemoved, packets.Logger{})
-	l.RegisterEvent(enums.EventTypeOtherGrabbedLoot, packets.EvGrabbedLoot{})
-	l.RegisterEvent(enums.EventTypeNewLoot, packets.Logger{})
 
-	gm := NewGameDataManager()
-	defer gm.Close(context.TODO())
+	// Loot events
+	l.RegisterOperation(enums.OpTypeInventoryMoveItem, packets.OpInventoryMoveItems{})
+	l.RegisterEvent(enums.EventTypeNewSimpleItem, packets.EvNewSimpleItem{})
+	l.RegisterEvent(enums.EventTypeNewLootChest, packets.EvNewLootChest{})
+	l.RegisterEvent(enums.EventTypeNewLoot, packets.EvNewLoot{})
+	l.RegisterEvent(enums.EventTypeAttachItemContainer, packets.EvAttachItemContainer{})
+	l.RegisterEvent(enums.EventTypeDetachItemContainer, packets.EvDetachItemContainer{})
+	l.RegisterEvent(enums.EventTypeUpdateLootChest, packets.EvUpdateLootChest{})
+	l.RegisterEvent(enums.EventTypeOtherGrabbedLoot, packets.EvOtherGrabbedLoot{})
+	l.RegisterEvent(enums.EventTypeInventoryPutItem, packets.EvInventoryPutItems{})
 
-	logger := NewDiscordLogger(gm, partyLoggerUrl, lootLoggerUrl)
-	defer logger.Close(context.TODO())
+	ws := NewWebSocketClient(serverAddr)
+	defer ws.Close()
 
 	l.RegisterListeners(func(data interface{}) {
 		switch d := data.(type) {
 		case *packets.OpJoinGame:
-			log.Printf("Joined as %s in the game with name %s and guild %s", d.CharacterID, d.CharacterName, d.GuildName)
-			gm.Initialize(d.CharacterID, d.CharacterName)
+			log.Printf("Joined game with Character ID: %s, Name: %s, Guild: %s, Alliance: %s", d.CharacterID, d.CharacterName, d.GuildName, d.AllianceName)
+			if err := ws.Initialize(d.CharacterID, d.CharacterName, d.GuildName, d.AllianceName); err != nil {
+				log.Fatal(err)
+			}
 
 		case *packets.EvNewCharacter:
-			gm.CreateNewChar(d.PlayerUID, d.PlayerName)
+			if err := ws.CreateNewChar(d.PlayerUID, d.PlayerName, d.GuildName, d.AllianceName); err != nil {
+				log.Println(err)
+			}
+
+		case *packets.EvCharacterStats:
+			if err := ws.UpdateCharacterStats(d.PlayerName, d.GuildName, d.AllianceName); err != nil {
+				log.Println(err)
+			}
 
 		case *packets.EvPartySinglePlayerJoined:
-			if gm.CurrentParty == nil {
-				panic("currentParty is nil")
+			if err := ws.CreateNewChar(d.PlayerUID, d.PlayerName, "", ""); err != nil {
+				log.Println(err)
 			}
 
-			gm.CreateNewChar(d.PlayerUID, d.PlayerName)
-			gm.CurrentParty.AddPlayer(d.PlayerUID)
+			if err := ws.AddPartyPlayer(d.PlayerUID); err != nil {
+				log.Println(err)
+			}
 
-			logger.LogPartyAdd(d.PlayerUID)
 		case *packets.EvPartyJoined:
 			for i, playerUsername := range d.PlayerUsernames {
-				gm.CreateNewChar(d.PlayersUuid[i], playerUsername)
+				if err := ws.CreateNewChar(d.PlayersUuid[i], playerUsername, "", ""); err != nil {
+					log.Println(err)
+				}
 			}
 
-			var newParty bool
-
-			var removedPlayers, addedPlayers []uuid.UUID
-			gm.CurrentParty, newParty, removedPlayers, addedPlayers = gm.CreatePartyOrUpdate(d.PartyLeader, d.PlayersUuid)
-
-			if newParty {
-				logger.LogPartyCreate(gm.CurrentParty)
-			} else {
-				logger.LogPartyUpdate(removedPlayers, addedPlayers)
+			if err := ws.JoinParty(d.PartyLeader, d.PlayersUuid); err != nil {
+				log.Println(err)
 			}
 
 		case *packets.EvPartyLeft:
-			if gm.CurrentParty == nil {
-				panic("currentParty is nil")
-			}
-
-			if d.PlayerUID == gm.CurrentUser {
-				gm.CurrentParty.RemoveSelf(d.PlayerUID)
-				logger.LogSelfLeave(d.PlayerUID)
-			} else {
-				gm.CurrentParty.RemovePlayer(d.PlayerUID)
-				logger.LogPartyLeft(d.PlayerUID)
+			if err := ws.RemovePartyPlayer(d.PlayerUID); err != nil {
+				log.Println(err)
 			}
 
 		case *packets.EvPartyDisbanded:
-			if gm.CurrentParty == nil {
-				panic("currentParty is nil")
+			if err := ws.DisbandParty(); err != nil {
+				log.Println(err)
 			}
-
-			gm.DisbandParty(gm.CurrentParty)
-			logger.LogPartyDisband()
-			gm.CurrentParty = nil
 
 		case *packets.EvPartyLeaderChanged:
-			if gm.CurrentParty == nil {
-				panic("currentParty is nil")
+			if err := ws.UpdatePartyLeader(d.NewPartyLeader); err != nil {
+				log.Println(err)
 			}
 
-			currentParty := gm.CurrentParty
+		case *packets.OpInventoryMoveItems:
+			if err := ws.MoveItems(d.FromSlot, d.FromUUID, d.ToSlot, d.ToUUID); err != nil {
+				log.Println(err)
+			}
 
-			gm.Parties.Delete(currentParty.PartyOwner)
-			currentParty.PartyOwner = d.NewPartyLeader
-			gm.Parties.Store(d.NewPartyLeader, currentParty)
+		case *packets.EvInventoryPutItems:
+			if err := ws.PutItems(d.ObjectId, d.ContainerId, d.SlotId); err != nil {
+				log.Println(err)
+			}
+
+		case *packets.EvNewLootChest:
+			if err := ws.CreateNewLootChest(d.Id, d.Owner); err != nil {
+				log.Println(err)
+			}
+
+		case *packets.EvNewLoot:
+			if err := ws.CreateNewLoot(d.Id, d.Owner); err != nil {
+				log.Println(err)
+			}
+
+		case *packets.EvUpdateLootChest:
+			if err := ws.UpdateLootChest(d.Id); err != nil {
+				log.Println(err)
+			}
+
+		case *packets.EvOtherGrabbedLoot:
+			if err := ws.OtherGrabLoot(d.LootedFromName, d.LooterByName, d.IsSilver, d.ItemIndex, d.Quantity); err != nil {
+				log.Println(err)
+			}
+
+		case *packets.EvNewSimpleItem:
+			if err := ws.NewSimpleItem(d.Id, d.ItemIndex, d.Quantity); err != nil {
+				log.Println(err)
+			}
+
+		case *packets.EvAttachItemContainer:
+			if err := ws.AttachItemContainer(d.Id, d.ContainerUUID, d.Items, d.Slots); err != nil {
+				log.Println(err)
+			}
+
+		case *packets.EvDetachItemContainer:
+			if err := ws.DetachItemContainer(d.ContainerUUID); err != nil {
+				log.Println(err)
+			}
 
 		default:
 			log.Println(data)

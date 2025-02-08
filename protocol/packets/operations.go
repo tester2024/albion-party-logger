@@ -7,6 +7,7 @@ type OpJoinGame struct {
 	CharacterName string    `albion:"2"`
 	GuildID       uuid.UUID `albion:"53"`
 	GuildName     string    `albion:"57"`
+	AllianceName  string    `albion:"77"`
 }
 
 type OpClusterChange struct {

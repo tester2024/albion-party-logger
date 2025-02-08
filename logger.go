@@ -4,7 +4,6 @@ import (
 	"M00DSWINGS/protocol"
 	"M00DSWINGS/protocol/enums"
 	"M00DSWINGS/protocol/photon"
-	"encoding/hex"
 	"errors"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -76,13 +75,13 @@ func (e *Logger) handleReliableCommand(cmd *photon.Command) {
 			return
 		}
 
-		log.Printf("Could not decode reliable message: %v - %v", err, hex.EncodeToString(cmd.Data))
+		//log.Printf("Could not decode reliable message: %v - %v", err, hex.EncodeToString(cmd.Data))
 		return
 	}
 
 	params, err := photon.DecodeReliableMessage(msg)
 	if err != nil {
-		log.Printf("Could not decode reliable message: %v - %v", err, hex.EncodeToString(cmd.Data))
+		//log.Printf("Could not decode reliable message: %v - %v", err, hex.EncodeToString(cmd.Data))
 		return
 	}
 
@@ -93,9 +92,9 @@ func (e *Logger) handleReliableCommand(cmd *photon.Command) {
 
 			e.handleOperation(opType, params)
 		} else {
-			log.Printf("ERROR: Could not decode operation: [%d] (%d) (%d) %v", msg.Type,
-				msg.ParamaterCount, len(msg.Data),
-				hex.EncodeToString(msg.Data))
+			//log.Printf("ERROR: Could not decode operation: [%d] (%d) (%d) %v", msg.Type,
+			//	msg.ParamaterCount, len(msg.Data),
+			//	hex.EncodeToString(msg.Data))
 		}
 	case photon.EventDataType:
 		if msg.EventCode == 3 {
@@ -225,7 +224,9 @@ func (e *Logger) updateData(params photon.ReliableMessageParamaters, input any) 
 					v = protocol.DecodeInteger(v)
 				}
 
-				if field.Type() == reflect.TypeOf([]int8{}) {
+				if field.Type() == reflect.TypeOf([]int8{}) ||
+					field.Type() == reflect.TypeOf([]int{}) ||
+					field.Type() == reflect.TypeOf([]int64{}) {
 					v = protocol.DecodeIntegers(v)
 				}
 
