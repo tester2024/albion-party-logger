@@ -104,7 +104,7 @@ jobs:
 
       - name: Generate resource file (Windows only)
         if: matrix.target == 'windows'
-        run: goversioninfo -o resource.syso
+        run: go run github.com/josephspurrier/goversioninfo -o resource.syso
 
       - name: Build
         run: |
