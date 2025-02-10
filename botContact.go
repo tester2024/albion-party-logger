@@ -115,7 +115,7 @@ func (c *WebSocketClient) writeLoop(ctx context.Context) {
 }
 
 func (c *WebSocketClient) reconnect(ctx context.Context) {
-	c.conn.Close()
+	_ = c.conn.Close()
 	c.conn = nil
 	go c.Connect(ctx)
 }
@@ -386,7 +386,7 @@ func (c *WebSocketClient) DetachItemContainer(containerUUID uuid.UUID) error {
 	return nil
 }
 
-func (c *WebSocketClient) NewSimpleItem(id int, index int, quantity int) interface{} {
+func (c *WebSocketClient) NewSimpleItem(id int, index int, quantity int) error {
 	msg := map[string]interface{}{
 		"action":   "new_simple_item",
 		"id":       id,
@@ -396,6 +396,20 @@ func (c *WebSocketClient) NewSimpleItem(id int, index int, quantity int) interfa
 
 	if err := c.Send(context.Background(), msg); err != nil {
 		return fmt.Errorf("Failed to send new_simple_item message: %v\n", err)
+	}
+
+	return nil
+}
+
+func (c *WebSocketClient) PartyReadCheck(members []uuid.UUID, status []int) error {
+	msg := map[string]interface{}{
+		"action":  "party_ready_check",
+		"members": members,
+		"status":  status,
+	}
+
+	if err := c.Send(context.Background(), msg); err != nil {
+		return fmt.Errorf("Failed to send party_ready_check message: %v\n", err)
 	}
 
 	return nil

@@ -59,7 +59,7 @@ func main() {
 	l.RegisterEvent(enums.EventTypePartyDisbanded, packets.EvPartyDisbanded{})
 
 	// Log Party events
-	l.RegisterEvent(enums.EventTypePartyReadyCheckUpdate, packets.Logger{})
+	l.RegisterEvent(enums.EventTypePartyReadyCheckUpdate, packets.EvPartyReadyCheck{})
 	l.RegisterEvent(enums.EventTypePartyPlayerUpdated, packets.Logger{})
 	l.RegisterEvent(enums.EventTypePartyInvitationAnswer, packets.Logger{})
 	l.RegisterEvent(enums.EventTypePartyJoinRequestAnswer, packets.Logger{})
@@ -175,6 +175,11 @@ func main() {
 
 		case *packets.EvDetachItemContainer:
 			if err := ws.DetachItemContainer(d.ContainerUUID); err != nil {
+				log.Println(err)
+			}
+
+		case *packets.EvPartyReadyCheck:
+			if err := ws.PartyReadCheck(d.Members, d.Status); err != nil {
 				log.Println(err)
 			}
 

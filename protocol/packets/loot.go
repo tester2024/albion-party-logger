@@ -53,3 +53,8 @@ type OpInventoryMoveItems struct {
 	ToSlot   int       `albion:"3"`
 	ToUUID   uuid.UUID `albion:"4"`
 }
+
+type EvPartyReadyCheck struct {
+	Members []uuid.UUID `albion:"2"`
+	Status  []int       `albion:"3"`
+}
